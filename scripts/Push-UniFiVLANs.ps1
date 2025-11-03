@@ -29,4 +29,4 @@ try {
     [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $originalCallback
 }
 
-Write-Host "Provision USG in controller (Devices > USG > Actions > Provision) to apply 10.0.5.x."
+Write-Host "Provision USG in controller to apply 10.0.5.x."
