@@ -14,5 +14,19 @@ $payload = Get-Content $ResolvedPayload -Raw | ConvertFrom-Json
 
 $creds = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$Username`:$Password"))
 
-Invoke-RestMethod -Uri "https://$Controller/api/s/$Site/rest/networkconf" -Method Post -Headers @{ Authorization = "Basic $creds"; "Content-Type" = "application/json" } -Body ($payload | ConvertTo-Json -Depth 3) -SkipCertificateCheck
-Write-Host "VLANs pushed from $ResolvedPayload! Provision USG in controller (Devices > USG > Actions > Provision)."
+# Temp cert bypass for self-signed (reset after)
+$originalCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+
+try {
+    $response = Invoke-RestMethod -Uri "https://$Controller/api/s/$Site/rest/networkconf" -Method Post -Headers @{ Authorization = "Basic $creds"; "Content-Type" = "application/json" } -Body ($payload | ConvertTo-Json -Depth 3)
+    Write-Host "VLANs pushed successfully! Response: $($response | ConvertTo-Json -Compress)"
+} catch {
+    Write-Error "API push failed: $($_.Exception.Message)"
+    Write-Host "Check creds/site/JSON—common: 401 (auth), 400 (invalid subnet format)."
+} finally {
+    # Reset cert callback
+    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $originalCallback
+}
+
+Write-Host "Provision USG in controller (Devices > USG > Actions > Provision) to apply 10.0.5.x."
