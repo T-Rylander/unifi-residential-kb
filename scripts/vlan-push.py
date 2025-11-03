@@ -1,0 +1,1 @@
+vlan-push.py (Netmiko Automation - Install netmiko locally if needed)import netmikoPlaceholder: Push VLANs to US-8device = {"device_type": "ubiquiti", "host": "192.168.1.1"}... (Full script post-Sunday)print("VLAN automation stub - 70% time savings target")

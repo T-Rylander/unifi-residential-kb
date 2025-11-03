@@ -1,0 +1,5 @@
+
+Sensitives*.key
+*.pem
+local_ips.txtLogs*.logOS.DS_Store
+Thumbs.db
