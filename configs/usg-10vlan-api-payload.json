@@ -1,0 +1,43 @@
+{
+  "_default": false,
+  "networks": [
+    {
+      "name": "Trusted",
+      "purpose": "corporate",
+      "vlan_id": 1,
+      "subnet": "10.0.5.1/24",
+      "dhcp_range": "10.0.5.100,10.0.5.200",
+      "dhcp_gateway_ip": "10.0.5.1",
+      "dhcp_dns_server_ip": "10.0.5.1",
+      "dhcp_lease_time": 86400,
+      "static_mappings": [
+        {
+          "name": "CLIENT01",
+          "ip": "10.0.5.50",
+          "mac": "aa:bb:cc:dd:ee:ff"
+        }
+      ]
+    },
+    {
+      "name": "IoT",
+      "purpose": "corporate",
+      "vlan_id": 10,
+      "subnet": "10.0.5.65/26",
+      "dhcp_range": "10.0.5.70,10.0.5.100",
+      "dhcp_gateway_ip": "10.0.5.65",
+      "dhcp_dns_server_ip": "10.0.5.65",
+      "dhcp_lease_time": 86400
+    },
+    {
+      "name": "Guest",
+      "purpose": "guest",
+      "vlan_id": 20,
+      "subnet": "10.0.5.129/26",
+      "dhcp_range": "10.0.5.135,10.0.5.190",
+      "dhcp_gateway_ip": "10.0.5.129",
+      "dhcp_dns_server_ip": "10.0.5.129",
+      "dhcp_lease_time": 3600,
+      "guest_policy": "isolate"
+    }
+  ]
+}
