@@ -1,102 +1,109 @@
-# usg-10vlan-full-setup.conf
-# Full VLAN setup for residential UniFi USG (VyOS CLI snippet) - 10.0.5.x/24 congruent scheme
-# Purpose: Implements zero-trust segmentation using carved 10.0.5.x subnets for scalability/no-overlap.
-# Assumes: WAN=eth0 (DHCP), LAN trunk=eth1. Customize IPs/MACs as needed.
-# Usage: In 'configure' mode: load /tmp/usg-10vlan-full-setup.conf; commit; save.
-# Post-apply: Re-adopt in controller; reboot if interfaces flap. Test: show interfaces, show dhcp leases.
-# Scalability: Trusted /24 (254 hosts); IoT/Guest /26 (62 hosts) carved from 10.0.5.0/24 supernet.
+# Load-USGConfig-Enhanced.ps1
+# Enhanced script to upload and apply USG config snippet via SSH with robust error handling
+# Purpose: Automate loading VyOS CLI snippets (e.g., VLAN setups) onto UniFi USG.
+# Repo: https://github.com/T-Rylander/unifi-residential-kb
+# Usage: .\scripts\Load-USGConfig-Enhanced.ps1 -USG_IP "192.168.1.1" -ConfigFile "usg-10vlan-full-setup.conf"
+# Prereqs: Posh-SSH module (Install-Module Posh-SSH -Scope CurrentUser); OpenSSH for testing.
 
-# Interfaces: Basic WAN/LAN setup
-set interfaces ethernet eth0 address 'dhcp'  # WAN: DHCP from ISP (or static: 'YOUR_WAN_IP/24')
-set interfaces ethernet eth0 description 'WAN'
-set interfaces ethernet eth0 dhcp-options default-route update
-set interfaces ethernet eth0 dhcp-options default-route-distance 1
-set interfaces ethernet eth0 firewall in name WAN_IN
-set interfaces ethernet eth0 firewall local name WAN_LOCAL
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$USG_IP,  # e.g., "192.168.1.1"
 
-set interfaces ethernet eth1 description 'LAN Trunk'
-set interfaces ethernet eth1 address '10.0.5.1/24'  # Native VLAN1 (Trusted) - untagged traffic, full /24
-set interfaces ethernet eth1 firewall in name LAN_IN
+    [Parameter(Mandatory=$true)]
+    [string]$ConfigFile,  # Relative or full path to your config snippet (e.g., "usg-10vlan-full-setup.conf")
 
-# VLAN Interfaces: Sub-interfaces on eth1 trunk (carved /26 for IoT/Guest)
-set interfaces ethernet eth1 vif 10 address '10.0.5.65/26'  # IoT-VLAN10: 10.0.5.64/26 (64-127)
-set interfaces ethernet eth1 vif 10 description 'IoT-VLAN10'
-set interfaces ethernet eth1 vif 20 address '10.0.5.129/26'  # Guest-VLAN20: 10.0.5.128/26 (128-191)
-set interfaces ethernet eth1 vif 20 description 'Guest-VLAN20'
+    [Parameter(Mandatory=$false)]
+    [string]$Username = "ubnt",  # Default USG user
 
-# DHCP Configuration: Per-VLAN servers with ranges, leases, and statics (non-overlapping)
-# LAN1 (Trusted VLAN1: 10.0.5.0/24)
-set service dhcp-server shared-network-name LAN1 subnet 10.0.5.0/24 default-router '10.0.5.1'
-set service dhcp-server shared-network-name LAN1 subnet 10.0.5.0/24 dns-server '10.0.5.1'  # Or external: '8.8.8.8'
-set service dhcp-server shared-network-name LAN1 subnet 10.0.5.0/24 lease '86400'  # 24h lease
-set service dhcp-server shared-network-name LAN1 subnet 10.0.5.0/24 range 0 start '10.0.5.100'
-set service dhcp-server shared-network-name LAN1 subnet 10.0.5.0/24 range 0 stop '10.0.5.200'
-# Static: Document MAC in repo README or here for key devices
-set service dhcp-server shared-network-name LAN1 static-mapping CLIENT01 ip-address '10.0.5.50'  # MAC: aa:bb:cc:dd:ee:ff (e.g., server/printer)
-set service dhcp-server shared-network-name LAN1 static-mapping CLIENT01 mac-address 'aa:bb:cc:dd:ee:ff'
+    [Parameter(Mandatory=$false)]
+    [int]$Port = 22  # SSH port
+)
 
-# IoT (VLAN10: 10.0.5.64/26) - Limited range for security
-set service dhcp-server shared-network-name IOT subnet 10.0.5.64/26 default-router '10.0.5.65'
-set service dhcp-server shared-network-name IOT subnet 10.0.5.64/26 dns-server '10.0.5.65'
-set service dhcp-server shared-network-name IOT subnet 10.0.5.64/26 lease '86400'
-set service dhcp-server shared-network-name IOT subnet 10.0.5.64/26 range 0 start '10.0.5.70'
-set service dhcp-server shared-network-name IOT subnet 10.0.5.64/26 range 0 stop '10.0.5.100'  # Avoids overlap with Trusted
+# Normalize path: Resolve relative to script location (repo root: scripts/../configs/)
+$ScriptDir = Split-Path -Parent $PSScriptRoot
+if (-not (Test-Path $ConfigFile -PathType Leaf)) {
+    $ResolvedConfigFile = Resolve-Path (Join-Path $ScriptDir "configs\$ConfigFile") -ErrorAction Stop
+} else {
+    $ResolvedConfigFile = Resolve-Path $ConfigFile -ErrorAction Stop
+}
+$ConfigFile = $ResolvedConfigFile.Path  # Use resolved full path
 
-# Guest (VLAN20: 10.0.5.128/26) - Short leases, larger range for turnover
-set service dhcp-server shared-network-name GUEST subnet 10.0.5.128/26 default-router '10.0.5.129'
-set service dhcp-server shared-network-name GUEST subnet 10.0.5.128/26 dns-server '10.0.5.129'
-set service dhcp-server shared-network-name GUEST subnet 10.0.5.128/26 lease '3600'  # 1h for guests
-set service dhcp-server shared-network-name GUEST subnet 10.0.5.128/26 range 0 start '10.0.5.135'
-set service dhcp-server shared-network-name GUEST subnet 10.0.5.128/26 range 0 stop '10.0.5.190'
+# Validate config file exists (now with resolved path)
+if (-not (Test-Path $ConfigFile)) {
+    Write-Error "Config file not found: $ConfigFile (resolved from param: $ConfigFile)"
+    exit 1
+}
 
-# NAT: Masquerade outbound traffic from each VLAN to WAN (eth0)
-set nat source rule 10 description 'LAN1 (Trusted) to WAN - Outbound NAT'
-set nat source rule 10 outbound-interface 'eth0'
-set nat source rule 10 source address '10.0.5.0/24'
-set nat source rule 10 translation address 'masquerade'
+# Validate VyOS CLI format (check for 'set' commands)
+$ConfigLines = @(Get-Content $ConfigFile -Encoding UTF8)
+$SetLineCount = ($ConfigLines | Select-String '^set ' -Quiet).Count
+if ($SetLineCount -eq 0) {
+    Write-Warning "No 'set' commands detected in $ConfigFile. Ensure VyOS CLI format (lines starting with 'set '). Proceeding anyway."
+}
 
-set nat source rule 20 description 'IoT (VLAN10) to WAN - Outbound NAT'
-set nat source rule 20 outbound-interface 'eth0'
-set nat source rule 20 source address '10.0.5.64/26'
-set nat source rule 20 translation address 'masquerade'
+# Secure password prompt
+$SecurePassword = Read-Host "Enter USG password" -AsSecureString
+$Password = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecurePassword))
 
-set nat source rule 30 description 'Guest (VLAN20) to WAN - Outbound NAT'
-set nat source rule 30 outbound-interface 'eth0'
-set nat source rule 30 source address '10.0.5.128/26'
-set nat source rule 30 translation address 'masquerade'
+# Step 1: Upload config via Posh-SSH using base64 (robust, no quoting issues)
+Import-Module Posh-SSH -ErrorAction Stop
+$Credential = New-Object System.Management.Automation.PSCredential ($Username, (ConvertTo-SecureString $Password -AsPlainText -Force))
+$Session = New-SSHSession -ComputerName $USG_IP -Credential $Credential -AcceptKey:$true -Port $Port
 
-# Firewall: WAN Protection (Inbound)
-set firewall name WAN_IN default-action 'drop'  # Drop all inbound by default
-set firewall name WAN_IN rule 10 action 'accept'  # Allow established/related sessions
-set firewall name WAN_IN rule 10 state established 'enable'
-set firewall name WAN_IN rule 10 state related 'enable'
-set firewall name WAN_IN rule 20 action 'drop'  # Drop invalid packets
-set firewall name WAN_IN rule 20 state invalid 'enable'
+if (-not $Session) {
+    Write-Error "SSH connection failed. Test manually: ssh $Username@$USG_IP -p $Port"
+    exit 1
+}
 
-set firewall name WAN_LOCAL default-action 'drop'  # Protect USG itself
-set firewall name WAN_LOCAL rule 10 action 'accept'  # Allow established/related
-set firewall name WAN_LOCAL rule 10 state established 'enable'
-set firewall name WAN_LOCAL rule 10 state related 'enable'
-set firewall name WAN_LOCAL rule 20 action 'accept'  # Allow UniFi mgmt (adjust ports)
-set firewall name WAN_LOCAL rule 20 destination port '22,443'
-set firewall name WAN_LOCAL rule 20 protocol 'tcp'
-set firewall name WAN_LOCAL rule 30 action 'drop'  # Drop invalid
-set firewall name WAN_LOCAL rule 30 state invalid 'enable'
+Write-Host "Uploading $ConfigFile to USG:/tmp/usg-config.cfg via base64..."
+$ConfigBytes = [System.IO.File]::ReadAllBytes($ConfigFile)
+if (-not $ConfigBytes) {
+    Write-Error "Failed to read bytes from $ConfigFile - file empty or inaccessible."
+    Remove-SSHSession -SessionId $Session.SessionId
+    exit 1
+}
+$Base64Content = [Convert]::ToBase64String($ConfigBytes)
+# Pipe base64 to remote decode (VyOS has base64 built-in)
+$UploadCmd = "echo '$Base64Content' | base64 -d > /tmp/usg-config.cfg"
+Invoke-SSHCommand -SessionId $Session.SessionId -Command $UploadCmd -ErrorAction Stop
+$UploadOutput = (Invoke-SSHCommand -SessionId $Session.SessionId -Command "ls -la /tmp/usg-config.cfg").Output
+$RemoteSizeOutput = (Invoke-SSHCommand -SessionId $Session.SessionId -Command "stat -c%s /tmp/usg-config.cfg").Output.Trim()
+$RemoteSize = [int]$RemoteSizeOutput
+if ($UploadOutput -notmatch "usg-config.cfg" -or $RemoteSize -ne $ConfigBytes.Length) {
+    $LineCountOutput = (Invoke-SSHCommand -SessionId $Session.SessionId -Command "wc -l < /tmp/usg-config.cfg").Output.Trim()
+    Write-Error "Upload failed or size mismatch (expected $($ConfigBytes.Length) bytes / $($ConfigLines.Count) lines, got $RemoteSize bytes / $LineCountOutput lines). Output: $($UploadOutput | Out-String)"
+    Remove-SSHSession -SessionId $Session.SessionId
+    exit 1
+}
+Write-Host "Upload successful: $($UploadOutput | Out-String) (Bytes: $($ConfigBytes.Length); Lines: $($ConfigLines.Count))"
 
-# Firewall: LAN Segmentation (Zero-Trust - Block inter-VLAN; allow to WAN)
-set firewall name LAN_IN default-action 'accept'  # Allow outbound to WAN/intra-VLAN by default
-# Block LAN1 (Trusted) to IoT (VLAN10) - Prevent trusted devices accessing IoT
-set firewall name LAN_IN rule 10 action 'drop'
-set firewall name LAN_IN rule 10 destination address '10.0.5.64/26'
-# Block LAN1 (Trusted) to Guest (VLAN20) - Prevent trusted accessing guests
-set firewall name LAN_IN rule 20 action 'drop'
-set firewall name LAN_IN rule 20 destination address '10.0.5.128/26'
-# Apply to all LAN interfaces (expand for per-VLAN tweaks)
-set interfaces ethernet eth1 firewall in name LAN_IN
-set interfaces ethernet eth1 vif 10 firewall in name LAN_IN
-set interfaces ethernet eth1 vif 20 firewall in name LAN_IN  # Guest: Add captive portal rules if needed
+# Step 2: Apply config with error handling and verification
+Write-Host "Connected to USG. Applying config..."
+$Commands = @(
+    @{Cmd="configure"; Expect="edit"; Desc="Entering config mode"},
+    @{Cmd="load /tmp/usg-config.cfg"; Expect=".*"; Desc="Loading config"},  # Any output OK
+    @{Cmd="commit"; Expect="[Oo]k|success|applied|reviewed"; Desc="Committing changes"},  # Handles 'All items reviewed?'
+    @{Cmd="save"; Expect="saved|Saved"; Desc="Saving config"},
+    @{Cmd="show | compare"; Expect=".*"; Desc="Verifying changes (diff)"},
+    @{Cmd="exit"; Expect=".*"; Desc="Exiting config mode"},
+    @{Cmd="rm /tmp/usg-config.cfg"; Expect=".*"; Desc="Cleanup"},
+    @{Cmd="show log | last 10"; Expect=".*"; Desc="Recent logs for verification"}
+)
 
-# Optional: DNS Forwarding - Centralized forwarding for VLANs (remove if using external DNS only)
-set service dns forwarding listen-on eth1
-set service dns forwarding listen-on eth1.10
-set service dns forwarding listen-on eth1.20
+foreach ($Step in $Commands) {
+    $Output = (Invoke-SSHCommand -SessionId $Session.SessionId -Command $Step.Cmd).Output
+    Write-Host "[$($Step.Desc)] Output:`n$Output`n"
+    if ($Step.Expect -and $Output -notmatch $Step.Expect) {
+        Write-Error "Command '$($Step.Cmd)' failed. Expected pattern '$($Step.Expect)', got: $Output"
+        Remove-SSHSession -SessionId $Session.SessionId
+        exit 1
+    }
+}
+
+Remove-SSHSession -SessionId $Session.SessionId
+Write-Host "Config loaded, committed, and verified successfully! Review logs above for issues (e.g., interface changes)."
+Write-Host "Next: Reboot USG if needed (e.g., 'ssh $Username@$USG_IP -p $Port reboot') and re-adopt in UniFi Controller."
+
+# Clear sensitive vars
+$Password = $null
+$SecurePassword.Dispose()
