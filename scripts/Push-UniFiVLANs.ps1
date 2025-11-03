@@ -1,9 +1,9 @@
 # Push-UniFiVLANs.ps1 - API-based VLAN/DHCP push to controller (provisions to USG)
 param(
-    [string]$Controller = "your-controller-ip:8443",
-    [string]$Site = "default",
+    [string]$Controller = "192.168.1.7:8443",
+    [string]$Site = "Rylander",
     [string]$Username = "ubnt",
-    [string]$Password = "yourpassword",
+    [string]$Password = "ubnt",
     [string]$PayloadFile = "usg-10vlan-api-payload.json",
     [switch]$CloudHosted = $false  # Set $true for cloud.ui.com (no /proxy/network)
 )
