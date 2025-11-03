@@ -5,7 +5,7 @@ param(
     [string]$Username = "ubnt",
     [string]$Password = "yourpassword",
     [string]$PayloadFile = "usg-10vlan-api-payload.json",
-    [switch]$UseHTTP = $false  # Fallback to HTTP 8080 if HTTPS fails
+    [switch]$CloudHosted = $false  # Set $true for cloud.ui.com (no /proxy/network)
 )
 
 # Normalize path
@@ -15,40 +15,48 @@ $payload = Get-Content $ResolvedPayload -Raw | ConvertFrom-Json
 
 $creds = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$Username`:$Password"))
 
-# Pre-flight: Test connectivity
-$port = if ($UseHTTP) { 8080 } else { 8443 }
-$proto = if ($UseHTTP) { "http" } else { "https" }
-$connTest = Test-NetConnection -ComputerName $Controller.Split(':')[0] -Port $port
+# Pre-flight: Test connectivity (port 8443)
+$ip = $Controller.Split(':')[0]
+$port = 8443
+$connTest = Test-NetConnection -ComputerName $ip -Port $port
 if (-not $connTest.TcpTestSucceeded) {
-    Write-Error "Connectivity failed to $Controller ($proto`://$Controller/api/s/$Site). Check: Controller running? Firewall allows $port TCP? Correct IP?"
-    Write-Host "Tip: Run 'Test-NetConnection -ComputerName <ip> -Port $port' manually."
+    Write-Error "Connectivity failed to $Controller on port $port. Check firewall/IP."
     return
 }
-
 Write-Host "Connectivity OK to $Controller on port $port."
 
-# Temp cert bypass (HTTPS only)
-if (-not $UseHTTP) {
-    $originalCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
-    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+# Get sites to validate $Site (helps debug 404s)
+$proto = "https"
+$siteUri = "$proto`://$Controller"
+if (-not $CloudHosted) { $siteUri += "/proxy/network" }
+$siteUri += "/api/s/$Site/self/sites"
+try {
+    $sitesResponse = Invoke-RestMethod -Uri $siteUri -Method Get -Headers @{ Authorization = "Basic $creds" } -SkipCertificateCheck:$false
+    Write-Host "Site '$Site' valid. Available sites: $($sitesResponse.data.desc)"
+} catch {
+    Write-Warning "Site check failed ($($_.Exception.Message)). Assuming '$Site' is correct—proceed?"
 }
 
+# Temp cert bypass
+$originalCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+
 try {
-    $uri = "$proto`://$Controller/api/s/$Site/rest/networkconf"
+    $uri = "$proto`://$Controller"
+    if (-not $CloudHosted) { $uri += "/proxy/network" }
+    $uri += "/api/s/$Site/rest/networkconf"
     $response = Invoke-RestMethod -Uri $uri -Method Post -Headers @{ Authorization = "Basic $creds"; "Content-Type" = "application/json" } -Body ($payload | ConvertTo-Json -Depth 3)
     Write-Host "VLANs pushed successfully!"
     Write-Host "Response: $($response | ConvertTo-Json -Compress)"
 } catch {
     Write-Error "API push failed: $($_.Exception.Message)"
-    Write-Host "Check creds/site/JSON. Common: 401 (auth), 400 (invalid subnet), 404 (bad site)."
+    Write-Host "Common fixes: 401 (creds), 404 (site/prefix—try -CloudHosted if cloud.ui.com), 400 (JSON/subnet)."
     if ($_.Exception.Response) {
         $status = $_.Exception.Response.StatusCode
         Write-Host "HTTP Status: $status"
     }
 } finally {
-    if (-not $UseHTTP) {
-        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $originalCallback
-    }
+    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $originalCallback
 }
 
 Write-Host "Provision USG in controller to apply 10.0.5.x."
