@@ -1,9 +1,9 @@
 # Push-UniFiVLANs.ps1 - API-based VLAN/DHCP push to controller (provisions to USG)
 param(
-    [string]$Controller = "192.168.1.7:8443",
-    [string]$Site = "MegX",
+    [string]$Controller = "your-controller-ip:8443",
+    [string]$Site = "default",
     [string]$Username = "ubnt",
-    [string]$Password = "ubnt",
+    [string]$Password = "yourpassword",
     [string]$PayloadFile = "usg-10vlan-api-payload.json",
     [switch]$CloudHosted = $false  # Set $true for cloud.ui.com (no /proxy/network)
 )
@@ -25,32 +25,43 @@ if (-not $connTest.TcpTestSucceeded) {
 }
 Write-Host "Connectivity OK to $Controller on port $port."
 
-# Get sites to validate $Site (helps debug 404s)
-$proto = "https"
-$siteUri = "$proto`://$Controller"
-if (-not $CloudHosted) { $siteUri += "/proxy/network" }
-$siteUri += "/api/s/$Site/self/sites"
-try {
-    $sitesResponse = Invoke-RestMethod -Uri $siteUri -Method Get -Headers @{ Authorization = "Basic $creds" }
-    Write-Host "Site '$Site' valid. Available sites: $($sitesResponse.data.desc)"
-} catch {
-    Write-Warning "Site check failed ($($_.Exception.Message)). Assuming '$Site' is correct - proceed?"
-}
-
-# Temp cert bypass
+# Temp cert bypass - SET EARLY for all calls
 $originalCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
 
+# Get sites to validate $Site (helps debug 404s)
+$proto = "https"
+$baseUri = "$proto`://$Controller"
+if (-not $CloudHosted) { $baseUri += "/proxy/network" }
+$siteUri = "$baseUri/api/self/sites"  # Note: /api/self/sites for list (no /s/$Site)
 try {
-    $uri = "$proto`://$Controller"
-    if (-not $CloudHosted) { $uri += "/proxy/network" }
-    $uri += "/api/s/$Site/rest/networkconf"
+    $sitesResponse = Invoke-RestMethod -Uri $siteUri -Method Get -Headers @{ Authorization = "Basic $creds" }
+    $sites = $sitesResponse.data
+    Write-Host "Available sites:"
+    $sites | ForEach-Object { Write-Host "  - ID: $($_.id) | Name: $($_.desc)" }
+    if ($Site -eq "default") {
+        $defaultSite = $sites | Where-Object { $_.name -eq "default" } | Select-Object -First 1
+        if ($defaultSite) { $Site = $defaultSite.id }
+        Write-Host "Using site ID: $Site"
+    } else {
+        $matchingSite = $sites | Where-Object { $_.id -eq $Site }
+        if (-not $matchingSite) {
+            Write-Error "Site '$Site' not found. Use one from list above (e.g., -Site '5f8a2b3c4d5e6f7g')."
+            return
+        }
+    }
+} catch {
+    Write-Warning "Site list failed ($($_.Exception.Message)). Using provided '$Site' - proceed?"
+}
+
+try {
+    $uri = $baseUri + "/api/s/$Site/rest/networkconf"
     $response = Invoke-RestMethod -Uri $uri -Method Post -Headers @{ Authorization = "Basic $creds"; "Content-Type" = "application/json" } -Body ($payload | ConvertTo-Json -Depth 3)
     Write-Host "VLANs pushed successfully!"
     Write-Host "Response: $($response | ConvertTo-Json -Compress)"
 } catch {
     Write-Error "API push failed: $($_.Exception.Message)"
-    Write-Host "Common fixes: 401 (creds), 404 (site/prefix - try -CloudHosted if cloud.ui.com), 400 (JSON/subnet)."
+    Write-Host "Common fixes: 401 (creds), 404 (site/prefix - try -CloudHosted), 400 (JSON/subnet)."
     if ($_.Exception.Response) {
         $status = $_.Exception.Response.StatusCode
         Write-Host "HTTP Status: $status"
