@@ -31,10 +31,10 @@ $siteUri = "$proto`://$Controller"
 if (-not $CloudHosted) { $siteUri += "/proxy/network" }
 $siteUri += "/api/s/$Site/self/sites"
 try {
-    $sitesResponse = Invoke-RestMethod -Uri $siteUri -Method Get -Headers @{ Authorization = "Basic $creds" } -SkipCertificateCheck:$false
+    $sitesResponse = Invoke-RestMethod -Uri $siteUri -Method Get -Headers @{ Authorization = "Basic $creds" }
     Write-Host "Site '$Site' valid. Available sites: $($sitesResponse.data.desc)"
 } catch {
-    Write-Warning "Site check failed ($($_.Exception.Message)). Assuming '$Site' is correct—proceed?"
+    Write-Warning "Site check failed ($($_.Exception.Message)). Assuming '$Site' is correct - proceed?"
 }
 
 # Temp cert bypass
@@ -50,7 +50,7 @@ try {
     Write-Host "Response: $($response | ConvertTo-Json -Compress)"
 } catch {
     Write-Error "API push failed: $($_.Exception.Message)"
-    Write-Host "Common fixes: 401 (creds), 404 (site/prefix—try -CloudHosted if cloud.ui.com), 400 (JSON/subnet)."
+    Write-Host "Common fixes: 401 (creds), 404 (site/prefix - try -CloudHosted if cloud.ui.com), 400 (JSON/subnet)."
     if ($_.Exception.Response) {
         $status = $_.Exception.Response.StatusCode
         Write-Host "HTTP Status: $status"
