@@ -1,7 +1,7 @@
 # Push-UniFiVLANs.ps1 - API-based VLAN/DHCP push to controller (provisions to USG)
 param(
     [string]$Controller = "192.168.1.7:8443",
-    [string]$Site = "Default",
+    [string]$Site = "MegX",
     [string]$Username = "ubnt",
     [string]$Password = "ubnt",
     [string]$PayloadFile = "usg-10vlan-api-payload.json",
